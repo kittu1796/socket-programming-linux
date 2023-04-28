@@ -1,96 +1,81 @@
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
+/* 
+* File: client.c
+* Author: Ashwini Kumar
+* Date: 28.04.23
+*
+* Description: First try at writing client file.
+*/
 
-#define SOCKET_NAME "/tmp/DemoSocket"
-#define BUFFER_SIZE 128
+// INCLUDES
 
-int
-main(int argc, char *argv[])
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/un.h>
+#include<unistd.h>
+
+/* Macro definitions */
+#define SOCKET_NAME_CONST "/tmp/masterSocket" // should be unique
+#define BUFFER_SIZE 128 //SIze of buffer for the stream data
+
+int main(int argc, char *argv[])
 {
-    struct sockaddr_un addr;
-    int i;
+    struct sockaddr_un name;
+    int this_socket;
     int ret;
-    int data_socket;
+    int curr_number;
     char buffer[BUFFER_SIZE];
 
-    /* Create data socket. */
+    
 
-    data_socket = socket(AF_UNIX, SOCK_STREAM, 0);
-
-    if (data_socket == -1) {
-        perror("socket");
+    /* Create client socket */
+    this_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+    if(this_socket == -1)
+    {
+        perror("Socket: Unable to create socket");
         exit(EXIT_FAILURE);
     }
+    printf("Socket creation succesful\n");
 
-    /*
-     * For portability clear the whole structure, since some
-     * implementations have additional (nonstandard) fields in
-     * the structure.
-     * */
+    memset(&name, 0, sizeof(struct sockaddr_un));
 
-    memset(&addr, 0, sizeof(struct sockaddr_un));
+    name.sun_family = AF_UNIX;
+    strncpy(name.sun_path, SOCKET_NAME_CONST, sizeof(name.sun_path) -1);
 
-    /* Connect socket to socket address */
-
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_NAME, sizeof(addr.sun_path) - 1);
-
-    ret = connect (data_socket, (const struct sockaddr *) &addr,
+    ret = connect(this_socket, 
+            (const struct sockaddr *) &name,
             sizeof(struct sockaddr_un));
-
-    if (ret == -1) {
+    if (ret == -1){
         fprintf(stderr, "The server is down.\n");
+        perror("THis");
         exit(EXIT_FAILURE);
     }
 
-    /* Send arguments. */
     do{
-        printf("Enter number to send to server :\n");
-        scanf("%d", &i);
-        ret = write(data_socket, &i, sizeof(int));
-        if (ret == -1) {
-            perror("write");
-            break;
+        printf("Enter Number to send to server: \n");
+        scanf("%d", &curr_number);
+
+        ret = write(this_socket, &curr_number, sizeof(int));
+        if(ret ==-1){
+            perror("Write: Error");
+            exit(EXIT_FAILURE);
         }
-        printf("No of bytes sent = %d, data sent = %d\n", ret, i); 
-    } while(i);
 
-    /* Request result. */
-    
+        printf("No of bytes sent = %d, data sent = %d\n", ret, curr_number);
+
+    }while(curr_number);
+
     memset(buffer, 0, BUFFER_SIZE);
-    strncpy (buffer, "RES", strlen("RES"));
-    buffer[strlen(buffer)] = '\0';
-    printf("buffer = %s\n", buffer);
-
-    ret = write(data_socket, buffer, strlen(buffer));
-    if (ret == -1) {
-        perror("write");
+    ret = read(this_socket, buffer, BUFFER_SIZE);
+    if(ret == -1){
+        perror("Read: Error");
         exit(EXIT_FAILURE);
     }
 
-    /* Receive result. */
-    memset(buffer, 0, BUFFER_SIZE);
-    
-    ret = read(data_socket, buffer, BUFFER_SIZE);
-    if (ret == -1) {
-        perror("read");
-        exit(EXIT_FAILURE);
-    }
+    printf("Received from Server: %s\n", buffer);
 
-    /* Ensure buffer is 0-terminated. */
-
-    buffer[BUFFER_SIZE - 1] = 0;
-
-    printf("Result = %s\n", buffer);
-
-    /* Close socket. */
-
-    close(data_socket);
-
+    close(this_socket);
     exit(EXIT_SUCCESS);
+    
 }
