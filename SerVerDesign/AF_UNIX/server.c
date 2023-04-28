@@ -18,7 +18,7 @@
 #include<unistd.h>
 
 /* Macro definitions */
-#define SOCKET_NAME_CONST "/master/af-unix/scoket" // should be unique
+#define SOCKET_NAME_CONST "/master/af-unix/socket" // should be unique
 #define MAX_CLIENTS 20 // Set the maximum number of clients the OS should handle.
 #define BUFFER_SIZE 128 //SIze of buffer for the stream data
 
