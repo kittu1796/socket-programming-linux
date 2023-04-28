@@ -16,7 +16,7 @@
 #include<unistd.h>
 
 /* Macro definitions */
-#define SOCKET_NAME_CONST "/client/af-unix/socket" // should be unique
+#define SOCKET_NAME_CONST "/tmp/masterSocket" // should be unique
 #define BUFFER_SIZE 128 //SIze of buffer for the stream data
 
 int main(int argc, char *argv[])
@@ -27,11 +27,7 @@ int main(int argc, char *argv[])
     int curr_number;
     char buffer[BUFFER_SIZE];
 
-    memset(&name, 0, sizeof(struct sockaddr_un));
-
     
-    /*Inlink socket of same name*/
-    unlink(SOCKET_NAME_CONST);
 
     /* Create client socket */
     this_socket = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -42,6 +38,8 @@ int main(int argc, char *argv[])
     }
     printf("Socket creation succesful\n");
 
+    memset(&name, 0, sizeof(struct sockaddr_un));
+
     name.sun_family = AF_UNIX;
     strncpy(name.sun_path, SOCKET_NAME_CONST, sizeof(name.sun_path) -1);
 
@@ -49,7 +47,8 @@ int main(int argc, char *argv[])
             (const struct sockaddr *) &name,
             sizeof(struct sockaddr_un));
     if (ret == -1){
-        fprintf(stderr, "The server is down\n");
+        fprintf(stderr, "The server is down.\n");
+        perror("THis");
         exit(EXIT_FAILURE);
     }
 
@@ -74,7 +73,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    printf("Received from Server: %s", buffer);
+    printf("Received from Server: %s\n", buffer);
 
     close(this_socket);
     exit(EXIT_SUCCESS);

@@ -18,7 +18,7 @@
 #include<unistd.h>
 
 /* Macro definitions */
-#define SOCKET_NAME_CONST "/master/af-unix/socket" // should be unique
+#define SOCKET_NAME_CONST "/tmp/masterSocket" // should be unique
 #define MAX_CLIENTS 20 // Set the maximum number of clients the OS should handle.
 #define BUFFER_SIZE 128 //SIze of buffer for the stream data
 
@@ -47,7 +47,7 @@ int main (int argc, char *argv[])
     if(master_soc_fd == -1)
     {
         perror("Master socket FD: unable to create");
-        exit("EXIT_FAILURE");
+        exit(EXIT_FAILURE);
     }
 
     printf("Master socket: created successfully\n");
@@ -67,7 +67,7 @@ int main (int argc, char *argv[])
 
     /* Bind now */
     ret = bind(master_soc_fd, 
-                (const struct sockaddr *)&name,
+                (const struct sockaddr_un *)&name,
                 sizeof(struct sockaddr_un));
 
     //error check
