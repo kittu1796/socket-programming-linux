@@ -1,146 +1,167 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
+/* 
+* File: server.c
+* Author: Ashwini Kumar
+* Date: 28.04.23
+*
+* Description: First try at writing server file, refering the udemy course "Socket Programming in linux" for the AF_UNIX
+*              For a value sent to the server, the server will keep calculating the summation of the values until the value 0 is sent to the server. 
+*               On recieveing 0 to the server, the server sends the total sum computed untill now.
+*/
 
-#define SOCKET_NAME "/tmp/DemoSocket"
-#define BUFFER_SIZE 128
+// INCLUDES
 
-int
-main(int argc, char *argv[])
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/un.h>
+#include<unistd.h>
+
+/* Macro definitions */
+#define SOCKET_NAME_CONST "/master/af-unix/scoket" // should be unique
+#define MAX_CLIENTS 20 // Set the maximum number of clients the OS should handle.
+#define BUFFER_SIZE 128 //SIze of buffer for the stream data
+
+/* Main */
+
+int main (int argc, char *argv[])
 {
     struct sockaddr_un name;
-    
-#if 0  
-    struct sockaddr_un {
-        sa_family_t sun_family;               /* AF_UNIX */
-        char        sun_path[108];            /* pathname */
-    };
-#endif
 
-    int ret;
-    int connection_socket;
-    int data_socket;
-    int result;
-    int data;
+    /* Variables */
+    int master_soc_fd;
+    int ret; //generic valiable to hold return values
+    int client_result;
+    int client_socket;
     char buffer[BUFFER_SIZE];
+    int data;
 
-    /*In case the program exited inadvertently on the last run,
-     *remove the socket.
-     **/
+    /*Destroy old instance of the socket with same name, a precaution line*/
+    unlink(SOCKET_NAME_CONST);
 
-    unlink(SOCKET_NAME);
+    /* Create Master Socket File Descriptor */
 
-    /* Create Master socket. */
+    master_soc_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
-    /*SOCK_DGRAM for Datagram based communication*/
-    connection_socket = socket(AF_UNIX, SOCK_STREAM, 0);
-
-    if (connection_socket == -1) {
-        perror("socket");
-        exit(EXIT_FAILURE);
+    //error check: note the fd will be -ve in case of an error
+    if(master_soc_fd == -1)
+    {
+        perror("Master socket FD: unable to create");
+        exit("EXIT_FAILURE");
     }
-    
-    printf("Master socket created\n");
 
-    /*initialize*/
+    printf("Master socket: created successfully\n");
+
+    /*           Now do the binding of the socket 
+    *  
+    *     This bind, function call binds(attaches) the SOCKET_NAME to this fd. This means when OS rx an data targeted for SOCKET_NAME, the 
+    *     data is redirected by the OS to this server process.
+    * */
+    printf("Binding: Started\n");
+
+    /*prep for binding*/
     memset(&name, 0, sizeof(struct sockaddr_un));
 
-    /*Specify the socket Cridentials*/
     name.sun_family = AF_UNIX;
-    strncpy(name.sun_path, SOCKET_NAME, sizeof(name.sun_path) - 1);
+    strncpy(name.sun_path, SOCKET_NAME_CONST, sizeof(name.sun_path) -1);
 
-    /* Bind socket to socket name.*/
-    /* Purpose of bind() system call is that application() dictate the underlying 
-     * operating system the criteria of recieving the data. Here, bind() system call
-     * is telling the OS that if sender process sends the data destined to socket "/tmp/DemoSocket", 
-     * then such data needs to be delivered to this server process (the server process)*/
-    ret = bind(connection_socket, (const struct sockaddr *) &name,
-            sizeof(struct sockaddr_un));
+    /* Bind now */
+    ret = bind(master_soc_fd, 
+                (const struct sockaddr *)&name,
+                sizeof(struct sockaddr_un));
 
-    if (ret == -1) {
-        perror("bind");
+    //error check
+    if(ret == -1)
+    {
+        perror("Bind: Error in binding");
         exit(EXIT_FAILURE);
     }
+    printf("Bind: Binding successful\n");
 
-    printf("bind() call succeed\n");
-    /*
-     * Prepare for accepting connections. The backlog size is set
-     * to 20. So while one request is being processed other requests
-     * can be waiting.
-     * */
+    /*  Listen system call 
+    *   Start listning, also set the maximum number of clients teh OS should maintain.
+    *   If more than MAX_CLIENTS requiest are rx, the new request will drop.
+    **/
+   printf("Listen: Started\n");
+   ret = listen(master_soc_fd, MAX_CLIENTS);
 
-    ret = listen(connection_socket, 20);
-    if (ret == -1) {
-        perror("listen");
+   //error handel
+   if(ret == -1)
+   {
+        perror("Listen: Error in listen");
+        exit(EXIT_FAILURE);
+   }
+   printf("listen: listen successful\n");
+
+   while(1)
+   {
+    /* Wait for incomming connection request, block*/
+    printf("Waiting for accept system call, \nthis will block the server until a connect szstem call is made\n");
+
+    client_socket = accept(master_soc_fd, NULL, NULL);
+
+    if(client_socket == -1 )
+    {
+        perror("Accept: Error");
         exit(EXIT_FAILURE);
     }
+    printf("Accept: Connection accepted by client\n");
 
-    /* This is the main loop for handling connections. */
-    /*All Server process usually runs 24 x 7. Good Servers should always up
-     * and running and shold never go down. Have you ever seen Facebook Or Google
-     * page failed to load ??*/
-    for (;;) {
+    client_result = 0;
 
-        /* Wait for incoming connection. */
-        printf("Waiting on accept() sys call\n");
+    // Cater to this client process/socket
 
-        data_socket = accept(connection_socket, NULL, NULL);
-
-        if (data_socket == -1) {
-            perror("accept");
-            exit(EXIT_FAILURE);
-        }
-        
-        printf("Connection accepted from client\n");
-
-        result = 0;
-        for(;;) {
-
-            /*Prepare the buffer to recv the data*/
-            memset(buffer, 0, BUFFER_SIZE);
-
-            /* Wait for next data packet. */
-            /*Server is blocked here. Waiting for the data to arrive from client
-             * 'read' is a blocking system call*/
-            printf("Waiting for data from the client\n");
-            ret = read(data_socket, buffer, BUFFER_SIZE);
-
-            if (ret == -1) {
-                perror("read");
-                exit(EXIT_FAILURE);
-            }
-
-            /* Add received summand. */
-            memcpy(&data, buffer, sizeof(int));
-            if(data == 0) break;
-            result += data;
-        }
-
-        /* Send result. */
+    while(1)
+    {
         memset(buffer, 0, BUFFER_SIZE);
-        sprintf(buffer, "Result = %d", result);
+        printf("Wait for another value from the client\n");
 
-        printf("sending final result back to client\n");
-        ret = write(data_socket, buffer, BUFFER_SIZE);
-        if (ret == -1) {
-            perror("write");
+        ret = read(client_socket, buffer, BUFFER_SIZE);
+        if(ret == -1)
+        {
+            perror("Read: Error");
             exit(EXIT_FAILURE);
         }
 
-        /* Close socket. */
-        close(data_socket);
+        memcpy(&data, buffer, sizeof(int));
+        if(data ==0)break;
+        client_result += data;
     }
 
-    /*close the master socket*/
-    close(connection_socket);
-    printf("connection closed..\n");
+    /* Send the Result back to client*/
 
-    /* Server should release resources before getting terminated.
-     * Unlink the socket. */
+    memset(buffer, 0, BUFFER_SIZE);
+    sprintf(buffer, "Result = %d", client_result);
 
-    unlink(SOCKET_NAME);
-    exit(EXIT_SUCCESS);
+    printf("Sending total result to the client\n");
+    ret = write(client_socket, buffer, BUFFER_SIZE);
+
+    if(ret == -1)
+    {
+        perror("Write: error");
+        exit(EXIT_FAILURE);
+    }
+
+    /* close the client socket*/
+    close(client_socket);
+
+   }
+
+   /*close the master socket*/
+   close(master_soc_fd);
+   printf("Connection Closed ..\n");
+
+   unlink(SOCKET_NAME_CONST);
+   exit(EXIT_SUCCESS);
+
+
+    
 }
+
+/* Definitions: struct sockaddr_un
+* 
+* struct sockaddr_un{
+            sa_family_t sun_family; // AF_UNIX, can use other values here too.
+            char sun_path[108]; //pathname, this holds the name of the socket
+}
+*/
