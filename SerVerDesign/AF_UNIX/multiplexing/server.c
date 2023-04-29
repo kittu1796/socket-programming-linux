@@ -1,266 +1,333 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
+/* 
+* File: server.c
+* Author: Ashwini Kumar
+* Date: 28.04.23
+*
+* Description: First try at writing server file, refering the udemy course "Socket Programming in linux" for the AF_UNIX
+*              For a value sent to the server, the server will keep calculating the summation of the values until the value 0 is sent to the server. 
+*               On recieveing 0 to the server, the server sends the total sum computed untill now.
+*/
 
-#define SOCKET_NAME "/tmp/DemoSocket"
-#define BUFFER_SIZE 128
+// INCLUDES
 
-#define MAX_CLIENT_SUPPORTED    32
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/un.h>
+#include<unistd.h>
 
-/*An array of File descriptors which the server process
- * is maintaining in order to talk with the connected clients.
- * Master skt FD is also a member of this array*/
-int monitored_fd_set[MAX_CLIENT_SUPPORTED];
+/* Macro definitions */
+#define SOCKET_NAME_CONST "/tmp/masterSocket" // should be unique
+#define MAX_CLIENTS 20 // Set the maximum number of clients the OS should handle, i.e 19 since one is master_fd.
+#define BUFFER_SIZE 128 //SIze of buffer for the stream data
+#define FD_UNINIT_VALUE -1 //since 
 
-/*Each connected client's intermediate result is 
- * maintained in this client array.*/
-int client_result[MAX_CLIENT_SUPPORTED] = {0};
-
-/*Remove all the FDs, if any, from the the array*/
-static void
-intitiaze_monitor_fd_set(){
-
-    int i = 0;
-    for(; i < MAX_CLIENT_SUPPORTED; i++)
-        monitored_fd_set[i] = -1;
-}
-
-/*Add a new FD to the monitored_fd_set array*/
-static void
-add_to_monitored_fd_set(int skt_fd){
-
-    int i = 0;
-    for(; i < MAX_CLIENT_SUPPORTED; i++){
-
-        if(monitored_fd_set[i] != -1)
-            continue;
-        monitored_fd_set[i] = skt_fd;
-        break;
-    }
-}
-
-/*Remove the FD from monitored_fd_set array*/
-static void
-remove_from_monitored_fd_set(int skt_fd){
-
-    int i = 0;
-    for(; i < MAX_CLIENT_SUPPORTED; i++){
-
-        if(monitored_fd_set[i] != skt_fd)
-            continue;
-
-        monitored_fd_set[i] = -1;
-        break;
-    }
-}
-
-/* Clone all the FDs in monitored_fd_set array into 
- * fd_set Data structure*/
-static void
-refresh_fd_set(fd_set *fd_set_ptr){
-
-    FD_ZERO(fd_set_ptr);
-    int i = 0;
-    for(; i < MAX_CLIENT_SUPPORTED; i++){
-        if(monitored_fd_set[i] != -1){
-            FD_SET(monitored_fd_set[i], fd_set_ptr);
-        }
-    }
-}
-
-/*Get the numerical max value among all FDs which server
- * is monitoring*/
-
-static int
-get_max_fd(){
-
-    int i = 0;
-    int max = -1;
-
-    for(; i < MAX_CLIENT_SUPPORTED; i++){
-        if(monitored_fd_set[i] > max)
-            max = monitored_fd_set[i];
-    }
-
-    return max;
-}
+/* function prototype */
+static void init_monitored_fd_set();
+static void update_monitored_fd_set(int new_fd);
+static void remove_from_monitored_fd_set(int fd_to_remove);
+static void refresh_fd_set(fd_set *fd_set_ptr);
+static int get_max_fd();
 
 
 
-int
-main(int argc, char *argv[])
+/*Maintain and observe the all the fd linked to this pocess*/
+int monitored_fd_set[MAX_CLIENTS];
+
+/*Maintain the result of eeach client seperately*/
+int client_result[MAX_CLIENTS] = {0};
+
+/* Main */
+
+int main (int argc, char *argv[])
 {
     struct sockaddr_un name;
 
-#if 0  
-    struct sockaddr_un {
-        sa_family_t sun_family;               /* AF_UNIX */
-        char        sun_path[108];            /* pathname */
-    };
-#endif
-
-    int ret;
-    int connection_socket;
-    int data_socket;
-    int result;
-    int data;
+    /* Variables */
+    int master_soc_fd;
+    int ret; //generic valiable to hold return values
+    int client_socket;
     char buffer[BUFFER_SIZE];
-    fd_set readfds;
-    int comm_socket_fd, i;
-    intitiaze_monitor_fd_set();
-    add_to_monitored_fd_set(0);
+    int data;
+    fd_set os_fd_set;
+    int check_fd_itr;
+    int curr_socket_fd;
 
-    /*In case the program exited inadvertently on the last run,
-     *remove the socket.
-     **/
+    // init the monitored fd set
+    init_monitored_fd_set();
+    update_monitored_fd_set(0);
 
-    unlink(SOCKET_NAME);
+    /*Destroy old instance of the socket with same name, a precaution line*/
+    unlink(SOCKET_NAME_CONST);
 
-    /* Create Master socket. */
+    /* Create Master Socket File Descriptor */
 
-    /*SOCK_DGRAM for Datagram based communication*/
-    connection_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+    master_soc_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
-    if (connection_socket == -1) {
-        perror("socket");
+    //error check: note the fd will be -ve in case of an error
+    if(master_soc_fd == -1)
+    {
+        perror("Master socket FD: unable to create");
         exit(EXIT_FAILURE);
     }
 
-    printf("Master socket created\n");
+    printf("Master socket: created successfully\n");
 
-    /*initialize*/
+    /*           Now do the binding of the socket 
+    *  
+    *     This bind, function call binds(attaches) the SOCKET_NAME to this fd. This means when OS rx an data targeted for SOCKET_NAME, the 
+    *     data is redirected by the OS to this server process.
+    * */
+    printf("Binding: Started\n");
+
+    /*prep for binding*/
     memset(&name, 0, sizeof(struct sockaddr_un));
 
-    /*Specify the socket Cridentials*/
     name.sun_family = AF_UNIX;
-    strncpy(name.sun_path, SOCKET_NAME, sizeof(name.sun_path) - 1);
+    strncpy(name.sun_path, SOCKET_NAME_CONST, sizeof(name.sun_path) -1);
 
-    /* Bind socket to socket name.*/
-    /* Purpose of bind() system call is that application() dictate the underlying 
-     * operating system the criteria of recieving the data. Here, bind() system call
-     * is telling the OS that if sender process sends the data destined to socket "/tmp/DemoSocket", 
-     * then such data needs to be delivered to this server process (the server process)*/
-    ret = bind(connection_socket, (const struct sockaddr *) &name,
-            sizeof(struct sockaddr_un));
+    /* Bind now */
+    ret = bind(master_soc_fd, 
+                (const struct sockaddr_un *)&name,
+                sizeof(struct sockaddr_un));
 
-    if (ret == -1) {
-        perror("bind");
+    //error check
+    if(ret == -1)
+    {
+        perror("Bind: Error in binding");
         exit(EXIT_FAILURE);
     }
+    printf("Bind: Binding successful\n");
 
-    printf("bind() call succeed\n");
-    /*
-     * Prepare for accepting connections. The backlog size is set
-     * to 20. So while one request is being processed other requests
-     * can be waiting.
-     * */
+    /*  Listen system call 
+    *   Start listning, also set the maximum number of clients teh OS should maintain.
+    *   If more than MAX_CLIENTS requiest are rx, the new request will drop.
+    **/
+   printf("Listen: Started\n");
+   ret = listen(master_soc_fd, MAX_CLIENTS);
 
-    ret = listen(connection_socket, 20);
-    if (ret == -1) {
-        perror("listen");
+   //error handel
+   if(ret == -1)
+   {
+        perror("Listen: Error in listen");
         exit(EXIT_FAILURE);
-    }
+   }
+   printf("listen: listen successful\n");
 
-    /*Add master socket to Monitored set of FDs*/
-    add_to_monitored_fd_set(connection_socket);
+   /*Add the master socket FD to the monitored fd data structure*/
+   update_monitored_fd_set(master_soc_fd);
 
-    /* This is the main loop for handling connections. */
-    /*All Server process usually runs 24 x 7. Good Servers should always up
-     * and running and shold never go down. Have you ever seen Facebook Or Google
-     * page failed to load ??*/
-    for (;;) {
+   while(1)
+   {
 
-        refresh_fd_set(&readfds); /*Copy the entire monitored FDs to readfds*/
-        /* Wait for incoming connection. */
-        printf("Waiting on select() sys call\n");
+    /*Referh the OS's fd_set wrt to monitored fd set*/
+    refresh_fd_set(&os_fd_set);
+    printf("Refreshed the fd set, next will be blocked by select system call\n");
 
-        /* Call the select system call, server process blocks here. 
-         * Linux OS keeps this process blocked untill the connection initiation request Or 
-         * data requests arrives on any of the file Drscriptors in the 'readfds' set*/
+    /**
+     * select system call is to be made. This is also a blocking system call.
+     * This server process will be unbloacked once, a connect init call is made to the server process.
+    */
 
-        select(get_max_fd() + 1, &readfds, NULL, NULL, NULL);
+    select(get_max_fd()+1, &os_fd_set, NULL , NULL, NULL);
 
-        if(FD_ISSET(connection_socket, &readfds)){
+    /* Wait for incomming connection request, block*/
+    printf("Waiting for connect system call, \nthis will block the server until a connect szstem call is made or data exchange is to be made with an existing process\n");
 
-            /*Data arrives on Master socket only when new client connects with the server (that is, 'connect' call is invoked on client side)*/
-            printf("New connection recieved recvd, accept the connection\n");
+    // FD_ISSET, the first parameter is used to check if the fd is present in the Os's fd_set.
+    if(FD_ISSET(master_soc_fd, &os_fd_set))
+    {
+        printf("A new connect request is made to master socket\n");
+        client_socket = accept(master_soc_fd, NULL, NULL);
 
-            data_socket = accept(connection_socket, NULL, NULL);
-
-            if (data_socket == -1) {
-                perror("accept");
-                exit(EXIT_FAILURE);
-            }
-
-            printf("Connection accepted from client\n");
-
-            add_to_monitored_fd_set(data_socket);
-        }
-        else if(FD_ISSET(0, &readfds)){
-            memset(buffer, 0, BUFFER_SIZE);
-            ret = read(0, buffer, BUFFER_SIZE);
-            printf("Input read from console : %s\n", buffer);
-        }
-        else /* Data srrives on some other client FD*/
+        if(client_socket == -1 )
         {
-            /*Find the client which has send us the data request*/
-            i = 0, comm_socket_fd = -1;
-            for(; i < MAX_CLIENT_SUPPORTED; i++){
+            perror("Accept: Error");
+            exit(EXIT_FAILURE);
+        }
+        printf("Accept: Connection accepted by client\n");
 
-                if(FD_ISSET(monitored_fd_set[i], &readfds)){
-                    comm_socket_fd = monitored_fd_set[i];
+        /*Udpate the monitored fd_set */
+        update_monitored_fd_set(client_socket);
 
-                    /*Prepare the buffer to recv the data*/
+
+
+    }
+    else
+    {
+        /*Data request is sent to the os*/
+        
+        //Figure out which client has sent data request to the socket
+
+        for(check_fd_itr = 0; check_fd_itr<MAX_CLIENTS; check_fd_itr++)
+        {
+            if(FD_ISSET(monitored_fd_set[check_fd_itr], &os_fd_set))
+            {
+                curr_socket_fd = monitored_fd_set[check_fd_itr];
+                memset(buffer, 0, BUFFER_SIZE);
+                printf("Wait for another value from the client: %d\n", curr_socket_fd);
+
+                ret = read(curr_socket_fd, buffer, BUFFER_SIZE);
+                if(ret == -1)
+                {
+                    perror("Read: Error");
+                    exit(EXIT_FAILURE);
+                }
+
+                memcpy(&data, buffer, sizeof(int));
+
+                if(data == 0)
+                {
                     memset(buffer, 0, BUFFER_SIZE);
 
-                    /* Wait for next data packet. */
-                    /*Server is blocked here. Waiting for the data to arrive from client
-                     * 'read' is a blocking system call*/
-                    printf("Waiting for data from the client\n");
-                    ret = read(comm_socket_fd, buffer, BUFFER_SIZE);
+                    /* Send the Result back to client*/
+                    sprintf(buffer, "Result = %d", client_result[check_fd_itr]);
 
-                    if (ret == -1) {
-                        perror("read");
+                    printf("Sending total result to the client=%d\n", curr_socket_fd);
+                    ret = write(curr_socket_fd, buffer, BUFFER_SIZE);
+
+                    if(ret == -1)
+                    {
+                        perror("Write: error");
                         exit(EXIT_FAILURE);
                     }
 
-                    /* Add received summand. */
-                    memcpy(&data, buffer, sizeof(int));
-                    if(data == 0) {
-                        /* Send result. */
-                        memset(buffer, 0, BUFFER_SIZE);
-                        sprintf(buffer, "Result = %d", client_result[i]);
-
-                        printf("sending final result back to client\n");
-                        ret = write(comm_socket_fd, buffer, BUFFER_SIZE);
-                        if (ret == -1) {
-                            perror("write");
-                            exit(EXIT_FAILURE);
-                        }
-
-                        /* Close socket. */
-                        close(comm_socket_fd);
-                        client_result[i] = 0; 
-                        remove_from_monitored_fd_set(comm_socket_fd);
-                        continue; /*go to select() and block*/
-                    }
-                    client_result[i] += data;
+                    /* close the client socket*/
+                    close(curr_socket_fd);
+                    client_result[check_fd_itr] = 0;
+                    remove_from_monitored_fd_set(curr_socket_fd);
+                    continue;
                 }
+                client_result[check_fd_itr] += data; 
+            
             }
         }
-    } /*go to select() and block*/
+    }    
 
-    /*close the master socket*/
-    close(connection_socket);
-    remove_from_monitored_fd_set(connection_socket);
-    printf("connection closed..\n");
+   }
 
-    /* Server should release resources before getting terminated.
-     * Unlink the socket. */
+   /*close the master socket*/
+   close(master_soc_fd);
+   remove_from_monitored_fd_set(master_soc_fd);
+   printf("Connection Closed ..\n");
 
-    unlink(SOCKET_NAME);
-    exit(EXIT_SUCCESS);
+   unlink(SOCKET_NAME_CONST);
+   exit(EXIT_SUCCESS);
+
+
+    
 }
+
+/* Definitions: struct sockaddr_un
+* 
+* struct sockaddr_un{
+            sa_family_t sun_family; // AF_UNIX, can use other values here too.
+            char sun_path[108]; //pathname, this holds the name of the socket
+}
+*/
+
+/**
+ * Function name: init_monitored_fd_set
+ * return: None
+ * input: None
+ * 
+ * Description: Initialize the monitored fd set to -1, for all fd values. for this the FD_UNINIT_VALUE is used(-ve value)
+*/
+static void init_monitored_fd_set()
+{
+    int iterator_var=0;
+
+    for(iterator_var=0; iterator_var<MAX_CLIENTS; iterator_var++)
+    {
+        monitored_fd_set[iterator_var] = FD_UNINIT_VALUE;
+    }
+}
+
+/**
+ * Function name: update_monitored_fd_set
+ * return: None
+ * input: new_fd_value
+ * 
+ * Description: ADd the new fd value to the first uninit fd value found in the set.
+*/
+static void update_monitored_fd_set(int new_fd)
+{
+    int iterator_var=0;
+
+    for(iterator_var=0; iterator_var<MAX_CLIENTS; iterator_var++)
+    {   
+        if(monitored_fd_set[iterator_var] == -1 )
+        {
+            monitored_fd_set[iterator_var] = new_fd;
+            break; //only want to update a single element in the set, and don't want to have duplicates.
+        }
+            
+    }
+}
+
+/**
+ * Function name: remove_from_monitored_fd_set
+ * return: None
+ * input: fd value to be removed from SET
+ * 
+ * Description: Assuming a process has sent a close szstem command, the fd value related to that process needs to be removed from the observable set list. 
+ *              This is done, by replacing the value of the fd by the uninit fd value macro.
+*/
+static void remove_from_monitored_fd_set(int fd_to_remove)
+{
+    int iterator_var =0;
+    for(iterator_var=0; iterator_var< MAX_CLIENTS; iterator_var++)
+    {
+        if(monitored_fd_set[iterator_var]== fd_to_remove)
+        {
+            monitored_fd_set[iterator_var] = FD_UNINIT_VALUE;
+            break; //considering only one instance of a single FD is present
+        }
+    }
+}
+
+/*
+ * Function name: refresh_fd_set
+ * return: None
+ * input: the fd_SET ptr which needs to be refreshed
+ * 
+ * Description: Remove all the previous fd's  in the fd_set and copies the content of monitored_fd_set into the fd_set.
+*/
+static void refresh_fd_set(fd_set *fd_set_ptr)
+{
+    FD_ZERO(fd_set_ptr);
+    int iterterator_var = 0;
+
+    for(iterterator_var=0; iterterator_var<MAX_CLIENTS; iterterator_var++)
+    {
+        if(monitored_fd_set[iterterator_var] != FD_UNINIT_VALUE)
+        {
+            FD_SET(monitored_fd_set[iterterator_var], fd_set_ptr);
+        }
+    }
+
+}
+
+
+/**
+ * Function name: get_max_fd
+ * return: int
+ * input: None
+ * 
+ * Description: Return the fd, with the maximum vlaue present inside the monitored_fd_set.
+*/
+static int get_max_fd()
+{   
+    int iterator_var = 0;
+    int max_fd_found = -1; //since fd will only have +ve values
+
+    for(iterator_var=0; iterator_var<MAX_CLIENTS; iterator_var++)
+    {
+        if(monitored_fd_set[iterator_var] > max_fd_found)
+            max_fd_found = monitored_fd_set[iterator_var];
+    }
+
+    return max_fd_found;
+}
+
