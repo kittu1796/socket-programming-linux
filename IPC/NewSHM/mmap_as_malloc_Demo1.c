@@ -56,6 +56,14 @@ int main(int argc, char **argv)
 
 }
 
+/**
+ * Function name: write_something
+ * return: None
+ * input: memory pointer and number of int bytes to write.
+ * 
+ * Description: Write content to respective memory location.
+*/
+
 static void write_something(int *ptr, int count)
 {
     printf("Starting to perform action on the memory\n");
@@ -66,6 +74,14 @@ static void write_something(int *ptr, int count)
     }
     printf("Wrtieing Complete\n");
 }
+
+/**
+ * Function name: read_memory
+ * return: None
+ * input: memory pointer and number of int bytes to read.
+ * 
+ * Description: read the memory and print content.
+*/
 
 static void read_memory(int *ptr, int count)
 {
