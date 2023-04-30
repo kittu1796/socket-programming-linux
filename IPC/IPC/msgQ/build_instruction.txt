@@ -1,0 +1,8 @@
+gcc -g -c sender.c -o sender.o
+gcc -g sender.o -o sender -lrt
+
+gcc -g -c recvr.c -o recvr.o
+gcc -g recvr.o -o recvr -lrt
+
+run with cmd: ./recvr /msgq1 //no '-' in this name 
+same with sender: ./sender /msgq1 
